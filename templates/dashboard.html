@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+<p class="muted">Live statistics read directly from the <code>blood_bank_db</code> MySQL database.</p>
+
+<div class="cards">
+  <div class="card"><span class="card-num">{{ stats.donors }}</span><span class="card-label">Total Donors</span></div>
+  <div class="card"><span class="card-num">{{ stats.hospitals }}</span><span class="card-label">Total Hospitals</span></div>
+  <div class="card"><span class="card-num">{{ stats.donations }}</span><span class="card-label">Total Donations</span></div>
+  <div class="card"><span class="card-num">{{ stats.donated_units }}</span><span class="card-label">Units Donated</span></div>
+  <div class="card"><span class="card-num">{{ stats.pending }}</span><span class="card-label">Pending Requests</span></div>
+  <div class="card"><span class="card-num">{{ stats.completed }}</span><span class="card-label">Completed Requests</span></div>
+</div>
+
+<h2>Current Blood Stock</h2>
+<table>
+  <thead>
+    <tr><th>Blood Group</th><th>Available Units</th><th>Last Updated</th><th>Status</th></tr>
+  </thead>
+  <tbody>
+    {% for row in stock %}
+    <tr class="{{ 'low' if row.Total_Qty < low_threshold }}">
+      <td><strong>{{ row.Blood_Type }}</strong></td>
+      <td>{{ row.Total_Qty }}</td>
+      <td>{{ row.Last_Updated }}</td>
+      <td>
+        {% if row.Total_Qty < low_threshold %}
+          <span class="badge badge-low">Low</span>
+        {% else %}
+          <span class="badge badge-ok">OK</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="muted">Low-stock threshold: below {{ low_threshold }} units.</p>
+
+<div class="two-col">
+  <div>
+    <h2>Recent Donations</h2>
+    <table>
+      <thead><tr><th>#</th><th>Donor</th><th>Group</th><th>Date</th><th>Qty</th></tr></thead>
+      <tbody>
+        {% for d in recent_donations %}
+        <tr>
+          <td>{{ d.Donation_ID }}</td><td>{{ d.donor }}</td>
+          <td>{{ d.Blood_Type }}</td><td>{{ d.Donation_Date }}</td><td>{{ d.Qty }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="muted">No donations recorded yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div>
+    <h2>Recent Requests</h2>
+    <table>
+      <thead><tr><th>#</th><th>Hospital</th><th>Group</th><th>Qty</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for r in recent_requests %}
+        <tr>
+          <td>{{ r.Request_ID }}</td><td>{{ r.hospital }}</td>
+          <td>{{ r.Blood_Type }}</td><td>{{ r.Qty }}</td>
+          <td><span class="status status-{{ r.Status|lower }}">{{ r.Status }}</span></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="muted">No requests yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

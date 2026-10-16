@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Donors{% endblock %}
+{% block content %}
+<h1>Donors</h1>
+
+<form class="filters" method="get" action="{{ url_for('donors') }}">
+  <input type="text" name="q" placeholder="Search by name or phone" value="{{ q }}">
+  <select name="bg">
+    <option value="">All blood groups</option>
+    {% for g in blood_groups %}
+      <option value="{{ g.Bg_ID }}" {{ 'selected' if selected_bg == g.Bg_ID|string }}>{{ g.Blood_Type }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit" class="btn">Search</button>
+  <a class="btn btn-secondary" href="{{ url_for('donors') }}">Reset</a>
+  <a class="btn btn-primary" href="{{ url_for('donor_new') }}">+ Add Donor</a>
+</form>
+
+<table>
+  <thead>
+    <tr>
+      <th>ID</th><th>Name</th><th>Age</th><th>Gender</th>
+      <th>Phone</th><th>Blood Group</th><th>Donations</th><th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for d in donors %}
+    <tr>
+      <td>{{ d.Donor_ID }}</td>
+      <td>{{ d.Name }}</td>
+      <td>{{ d.Age }}</td>
+      <td>{{ d.Gender }}</td>
+      <td>{{ d.Phone }}</td>
+      <td><strong>{{ d.Blood_Type }}</strong></td>
+      <td>{{ d.donation_count }} ({{ d.total_donated }} units)</td>
+      <td class="actions">
+        <a class="btn btn-small" href="{{ url_for('donor_donations', donor_id=d.Donor_ID) }}">History</a>
+        <a class="btn btn-small" href="{{ url_for('donor_edit', donor_id=d.Donor_ID) }}">Edit</a>
+        <form method="post" action="{{ url_for('donor_delete', donor_id=d.Donor_ID) }}"
+              onsubmit="return confirm('Delete this donor?');" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-small btn-danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8" class="muted">No donors found.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Blood Requests{% endblock %}
+{% block content %}
+
+{% if hospital %}
+  {# Hospital-specific request history view #}
+  <h1>Request History — {{ hospital.Name }}</h1>
+  <p class="muted">Phone {{ hospital.Phone }}{% if hospital.Address %} &middot; {{ hospital.Address }}{% endif %}</p>
+  <p><a class="btn btn-secondary" href="{{ url_for('hospitals_list') }}">&larr; Back to Hospitals</a></p>
+
+  <table>
+    <thead><tr><th>#</th><th>Blood Group</th><th>Date</th><th>Quantity</th><th>Status</th></tr></thead>
+    <tbody>
+      {% for r in requests %}
+      <tr>
+        <td>{{ r.Request_ID }}</td><td>{{ r.Blood_Type }}</td>
+        <td>{{ r.Date }}</td><td>{{ r.Qty }}</td>
+        <td><span class="status status-{{ r.Status|lower }}">{{ r.Status }}</span></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">This hospital has no requests yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+{% else %}
+  {# Full requests page: create form + filters + workflow actions #}
+  <h1>Blood Requests</h1>
+
+  <h2>Create a Request</h2>
+  <form class="form form-inline" method="post" action="{{ url_for('requests_view') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <label>Hospital
+      <select name="hospital_id" required>
+        <option value="">-- select hospital --</option>
+        {% for h in hospitals %}
+          <option value="{{ h.Hospital_ID }}">{{ h.Name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>Blood Group
+      <select name="bg_id" required>
+        <option value="">-- select group --</option>
+        {% for g in blood_groups %}
+          <option value="{{ g.Bg_ID }}">{{ g.Blood_Type }}</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>Date
+      <input type="date" name="date" value="{{ today }}" required>
+    </label>
+
+    <label>Quantity (units)
+      <input type="number" name="qty" min="0.01" step="0.01" required>
+    </label>
+
+    <button type="submit" class="btn btn-primary">Create Request</button>
+  </form>
+
+  <h2>All Requests</h2>
+  <form class="filters" method="get" action="{{ url_for('requests_view') }}">
+    <select name="hospital_id">
+      <option value="">All hospitals</option>
+      {% for h in hospitals %}
+        <option value="{{ h.Hospital_ID }}" {{ 'selected' if filters.hospital_id == h.Hospital_ID|string }}>{{ h.Name }}</option>
+      {% endfor %}
+    </select>
+    <select name="bg">
+      <option value="">All groups</option>
+      {% for g in blood_groups %}
+        <option value="{{ g.Bg_ID }}" {{ 'selected' if filters.bg == g.Bg_ID|string }}>{{ g.Blood_Type }}</option>
+      {% endfor %}
+    </select>
+    <select name="status">
+      <option value="">All statuses</option>
+      {% for s in statuses %}
+        <option value="{{ s }}" {{ 'selected' if filters.status == s }}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    <input type="date" name="date_from" value="{{ filters.date_from }}" title="From date">
+    <input type="date" name="date_to" value="{{ filters.date_to }}" title="To date">
+    <button type="submit" class="btn">Filter</button>
+    <a class="btn btn-secondary" href="{{ url_for('requests_view') }}">Reset</a>
+  </form>
+
+  <table>
+    <thead>
+      <tr><th>#</th><th>Hospital</th><th>Blood Group</th><th>Date</th><th>Quantity</th><th>Status</th><th>Actions</th></tr>
+    </thead>
+    <tbody>
+      {% for r in requests %}
+      <tr>
+        <td>{{ r.Request_ID }}</td>
+        <td>{{ r.hospital }}</td>
+        <td><strong>{{ r.Blood_Type }}</strong></td>
+        <td>{{ r.Date }}</td>
+        <td>{{ r.Qty }}</td>
+        <td><span class="status status-{{ r.Status|lower }}">{{ r.Status }}</span></td>
+        <td class="actions">
+          {% if r.Status == 'Pending' %}
+            <form method="post" action="{{ url_for('request_approve', request_id=r.Request_ID) }}" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn btn-small btn-primary">Approve</button>
+            </form>
+            <form method="post" action="{{ url_for('request_reject', request_id=r.Request_ID) }}" class="inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn btn-small btn-danger">Reject</button>
+            </form>
+          {% endif %}
+          {% if r.Status in ['Pending', 'Approved'] %}
+            <form method="post" action="{{ url_for('request_fulfill', request_id=r.Request_ID) }}" class="inline"
+                  onsubmit="return confirm('Fulfil this request and deduct stock?');">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn btn-small btn-ok">Fulfil</button>
+            </form>
+          {% endif %}
+          {% if r.Status in ['Completed', 'Rejected'] %}
+            <span class="muted">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="muted">No requests match the filter.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="muted">Workflow: Pending &rarr; Approved &rarr; Completed, or Pending &rarr; Rejected. Stock is deducted only when a request is fulfilled (Completed).</p>
+{% endif %}
+{% endblock %}

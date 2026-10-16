@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Hospitals{% endblock %}
+{% block content %}
+<h1>Hospitals</h1>
+
+<form class="filters" method="get" action="{{ url_for('hospitals_list') }}">
+  <input type="text" name="q" placeholder="Search by name or phone" value="{{ q }}">
+  <button type="submit" class="btn">Search</button>
+  <a class="btn btn-secondary" href="{{ url_for('hospitals_list') }}">Reset</a>
+  <a class="btn btn-primary" href="{{ url_for('hospital_new') }}">+ Add Hospital</a>
+</form>
+
+<table>
+  <thead>
+    <tr><th>ID</th><th>Name</th><th>Address</th><th>Phone</th><th>Requests</th><th>Actions</th></tr>
+  </thead>
+  <tbody>
+    {% for h in hospitals %}
+    <tr>
+      <td>{{ h.Hospital_ID }}</td>
+      <td>{{ h.Name }}</td>
+      <td>{{ h.Address or '—' }}</td>
+      <td>{{ h.Phone }}</td>
+      <td>{{ h.request_count }}</td>
+      <td class="actions">
+        <a class="btn btn-small" href="{{ url_for('hospital_requests', hospital_id=h.Hospital_ID) }}">History</a>
+        <a class="btn btn-small" href="{{ url_for('hospital_edit', hospital_id=h.Hospital_ID) }}">Edit</a>
+        <form method="post" action="{{ url_for('hospital_delete', hospital_id=h.Hospital_ID) }}"
+              onsubmit="return confirm('Delete this hospital?');" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="btn btn-small btn-danger">Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="muted">No hospitals found.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

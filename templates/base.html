@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Blood Bank Management System{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <button class="menu-toggle" id="menuToggle" aria-label="Toggle navigation">&#9776;</button>
+    <span class="brand">&#10084; Blood Bank Management System</span>
+  </header>
+
+  <div class="layout">
+    <nav class="sidebar" id="sidebar">
+      <a href="{{ url_for('dashboard') }}" class="{{ 'active' if request.endpoint == 'dashboard' }}">Dashboard</a>
+      <a href="{{ url_for('donors') }}" class="{{ 'active' if request.endpoint in ['donors','donor_new','donor_edit','donor_donations'] }}">Donors</a>
+      <a href="{{ url_for('donations') }}" class="{{ 'active' if request.endpoint == 'donations' }}">Donations</a>
+      <a href="{{ url_for('stock') }}" class="{{ 'active' if request.endpoint == 'stock' }}">Blood Stock</a>
+      <a href="{{ url_for('hospitals_list') }}" class="{{ 'active' if request.endpoint in ['hospitals_list','hospital_new','hospital_edit','hospital_requests'] }}">Hospitals</a>
+      <a href="{{ url_for('requests_view') }}" class="{{ 'active' if request.endpoint in ['requests_view'] }}">Blood Requests</a>
+      <a href="{{ url_for('reports') }}" class="{{ 'active' if request.endpoint == 'reports' }}">SQL Reports</a>
+    </nav>
+
+    <main class="content">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div class="flashes">
+            {% for category, message in messages %}
+              <div class="flash flash-{{ category }}">{{ message }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+</body>
+</html>

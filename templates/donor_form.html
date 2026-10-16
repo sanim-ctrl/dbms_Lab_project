@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit Donor' if donor_id else 'Add Donor' }}{% endblock %}
+{% block content %}
+<h1>{{ 'Edit Donor' if donor_id else 'Add Donor' }}</h1>
+
+<form class="form" method="post"
+      action="{{ url_for('donor_edit', donor_id=donor_id) if donor_id else url_for('donor_new') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <label>Name
+    <input type="text" name="name" value="{{ donor.Name if donor else '' }}" maxlength="100" required>
+  </label>
+
+  <label>Age
+    <input type="number" name="age" min="18" max="65" value="{{ donor.Age if donor else '' }}" required>
+  </label>
+
+  <label>Gender
+    <select name="gender" required>
+      {% for g in ['Male', 'Female', 'Other'] %}
+        <option value="{{ g }}" {{ 'selected' if donor and donor.Gender == g }}>{{ g }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label>Phone
+    <input type="text" name="phone" value="{{ donor.Phone if donor else '' }}" maxlength="15" required>
+  </label>
+
+  <label>Blood Group
+    <select name="bg_id" required>
+      <option value="">-- select --</option>
+      {% for g in blood_groups %}
+        <option value="{{ g.Bg_ID }}"
+          {{ 'selected' if donor and donor.Bg_ID|string == g.Bg_ID|string }}>{{ g.Blood_Type }}</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Save Donor</button>
+    <a class="btn btn-secondary" href="{{ url_for('donors') }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

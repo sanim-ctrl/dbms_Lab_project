@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}Donations{% endblock %}
+{% block content %}
+
+{% if readonly %}
+  {# Donor-specific donation history view #}
+  <h1>Donation History — {{ donor.Name }}</h1>
+  <p class="muted">
+    Blood group <strong>{{ donor.Blood_Type }}</strong> &middot;
+    Phone {{ donor.Phone }} &middot; Age {{ donor.Age }}
+  </p>
+  <p><a class="btn btn-secondary" href="{{ url_for('donors') }}">&larr; Back to Donors</a></p>
+
+  <table>
+    <thead><tr><th>#</th><th>Date</th><th>Blood Group</th><th>Quantity</th></tr></thead>
+    <tbody>
+      {% for row in history %}
+      <tr>
+        <td>{{ row.Donation_ID }}</td><td>{{ row.Donation_Date }}</td>
+        <td>{{ row.Blood_Type }}</td><td>{{ row.Qty }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="muted">This donor has no donations yet.</td></tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr><th colspan="3">Total</th><th>{{ total }} units</th></tr>
+    </tfoot>
+  </table>
+
+{% else %}
+  {# Full donations page: registration form + history + filters #}
+  <h1>Donations</h1>
+
+  <h2>Record a Donation</h2>
+  <form class="form form-inline" method="post" action="{{ url_for('donations') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <label>Donor
+      <select name="donor_id" id="donorSelect" required>
+        <option value="">-- select donor --</option>
+        {% for d in donors %}
+          <option value="{{ d.Donor_ID }}" data-bg="{{ d.Bg_ID }}">{{ d.Name }} ({{ d.Blood_Type }})</option>
+        {% endfor %}
+      </select>
+    </label>
+
+    <label>Blood Group
+      <select name="bg_id" id="bgSelect" required>
+        <option value="">-- select group --</option>
+        {% for g in blood_groups %}
+          <option value="{{ g.Bg_ID }}">{{ g.Blood_Type }}</option>
+        {% endfor %}
+      </select>
+      <small class="muted">Must match the donor's registered group.</small>
+    </label>
+
+    <label>Date
+      <input type="date" name="donation_date" value="{{ today }}" required>
+    </label>
+
+    <label>Quantity (units)
+      <input type="number" name="qty" min="0.01" step="0.01" required>
+    </label>
+
+    <button type="submit" class="btn btn-primary">Record Donation</button>
+  </form>
+
+  <h2>Donation History</h2>
+  <form class="filters" method="get" action="{{ url_for('donations') }}">
+    <select name="donor_id">
+      <option value="">All donors</option>
+      {% for d in donors %}
+        <option value="{{ d.Donor_ID }}" {{ 'selected' if filters.donor_id == d.Donor_ID|string }}>{{ d.Name }}</option>
+      {% endfor %}
+    </select>
+    <select name="bg">
+      <option value="">All groups</option>
+      {% for g in blood_groups %}
+        <option value="{{ g.Bg_ID }}" {{ 'selected' if filters.bg == g.Bg_ID|string }}>{{ g.Blood_Type }}</option>
+      {% endfor %}
+    </select>
+    <input type="date" name="date_from" value="{{ filters.date_from }}" title="From date">
+    <input type="date" name="date_to" value="{{ filters.date_to }}" title="To date">
+    <button type="submit" class="btn">Filter</button>
+    <a class="btn btn-secondary" href="{{ url_for('donations') }}">Reset</a>
+  </form>
+
+  <table>
+    <thead>
+      <tr><th>#</th><th>Donor</th><th>Blood Group</th><th>Date</th><th>Quantity</th></tr>
+    </thead>
+    <tbody>
+      {% for row in history %}
+      <tr>
+        <td>{{ row.Donation_ID }}</td>
+        <td><a href="{{ url_for('donor_donations', donor_id=row.Donor_ID) }}">{{ row.donor }}</a></td>
+        <td>{{ row.Blood_Type }}</td>
+        <td>{{ row.Donation_Date }}</td>
+        <td>{{ row.Qty }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">No donations match the filter.</td></tr>
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr><th colspan="4">Total (filtered)</th><th>{{ total }} units</th></tr>
+    </tfoot>
+  </table>
+{% endif %}
+{% endblock %}

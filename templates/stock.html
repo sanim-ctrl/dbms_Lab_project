@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Blood Stock{% endblock %}
+{% block content %}
+<h1>Blood Stock</h1>
+<p class="muted">One stock row per blood group, maintained by the donation and fulfilment transactions.</p>
+
+<table>
+  <thead>
+    <tr><th>Blood Group</th><th>Available Units</th><th>Last Updated</th><th>Status</th></tr>
+  </thead>
+  <tbody>
+    {% for row in stock %}
+    <tr class="{{ 'low' if row.Total_Qty < low_threshold }}">
+      <td><strong>{{ row.Blood_Type }}</strong></td>
+      <td>{{ row.Total_Qty }}</td>
+      <td>{{ row.Last_Updated }}</td>
+      <td>
+        {% if row.Total_Qty < low_threshold %}
+          <span class="badge badge-low">Low stock</span>
+        {% else %}
+          <span class="badge badge-ok">OK</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+  <tfoot>
+    <tr><th>Total</th><th>{{ total }} units</th><th></th><th></th></tr>
+  </tfoot>
+</table>
+<p class="muted">Low-stock threshold: below {{ low_threshold }} units (highlighted in red).</p>
+{% endblock %}

@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}SQL Reports{% endblock %}
+{% block content %}
+<h1>Database Reports</h1>
+<p class="muted">Each table below is produced by a SQL query (JOIN / GROUP BY / aggregate) running against MySQL.</p>
+
+<h2>1. Donor Counts by Blood Group</h2>
+<table>
+  <thead><tr><th>Blood Group</th><th>Donors</th></tr></thead>
+  <tbody>
+    {% for r in donors_by_group %}
+    <tr><td>{{ r.Blood_Type }}</td><td>{{ r.donor_count }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="concept">Concept: <code>LEFT JOIN</code> + <code>COUNT()</code> + <code>GROUP BY</code> — blood groups with zero donors still appear.</p>
+
+<h2>2. Total Donations by Donor</h2>
+<table>
+  <thead><tr><th>Donor</th><th>Blood Group</th><th>Donations</th><th>Total Units</th></tr></thead>
+  <tbody>
+    {% for r in donations_by_donor %}
+    <tr><td>{{ r.donor }}</td><td>{{ r.Blood_Type }}</td><td>{{ r.donations }}</td><td>{{ r.total_units }}</td></tr>
+    {% else %}
+    <tr><td colspan="4" class="muted">No donations yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="concept">Concept: <code>SUM()</code> with <code>GROUP BY</code> and a <code>HAVING</code> filter.</p>
+
+<h2>3. Blood Stock Summary</h2>
+<table>
+  <thead><tr><th>Blood Group</th><th>Available Units</th><th>Last Updated</th></tr></thead>
+  <tbody>
+    {% for r in stock_summary %}
+    <tr><td>{{ r.Blood_Type }}</td><td>{{ r.Total_Qty }}</td><td>{{ r.Last_Updated }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="concept">Concept: <code>INNER JOIN</code> between <code>Blood_Stock</code> and <code>Blood_Group</code>.</p>
+
+<h2>4. Pending Requests by Hospital</h2>
+<table>
+  <thead><tr><th>Hospital</th><th>Pending Requests</th><th>Pending Units</th></tr></thead>
+  <tbody>
+    {% for r in pending_by_hospital %}
+    <tr><td>{{ r.hospital }}</td><td>{{ r.pending_requests }}</td><td>{{ r.pending_units }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="concept">Concept: <code>LEFT JOIN</code> with a condition in the <code>ON</code> clause (conditional aggregation).</p>
+
+<h2>5. Request Counts by Status</h2>
+<table>
+  <thead><tr><th>Status</th><th>Requests</th></tr></thead>
+  <tbody>
+    {% for r in requests_by_status %}
+    <tr><td><span class="status status-{{ r.Status|lower }}">{{ r.Status }}</span></td><td>{{ r.request_count }}</td></tr>
+    {% else %}
+    <tr><td colspan="2" class="muted">No requests yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="concept">Concept: <code>GROUP BY</code> on an <code>ENUM</code> column.</p>
+
+<h2>6. Monthly Donation Totals</h2>
+<table>
+  <thead><tr><th>Month</th><th>Donations</th><th>Total Units</th></tr></thead>
+  <tbody>
+    {% for r in monthly_donations %}
+    <tr><td>{{ r.month }}</td><td>{{ r.donations }}</td><td>{{ r.total_units }}</td></tr>
+    {% else %}
+    <tr><td colspan="3" class="muted">No donations yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="concept">Concept: <code>DATE_FORMAT()</code> + <code>SUM()</code> grouped by year-month.</p>
+
+<h2>7. Low-Stock Groups (below {{ low_threshold }} units)</h2>
+<table>
+  <thead><tr><th>Blood Group</th><th>Available Units</th></tr></thead>
+  <tbody>
+    {% for r in low_stock %}
+    <tr class="low"><td>{{ r.Blood_Type }}</td><td>{{ r.Total_Qty }}</td></tr>
+    {% else %}
+    <tr><td colspan="2" class="muted">No blood group is below the threshold.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="concept">Concept: <code>WHERE</code> threshold filter with <code>ORDER BY</code>.</p>
+
+<h2>8. Most Frequently Requested Blood Groups</h2>
+<table>
+  <thead><tr><th>Blood Group</th><th>Times Requested</th><th>Total Units Requested</th></tr></thead>
+  <tbody>
+    {% for r in most_requested %}
+    <tr><td>{{ r.Blood_Type }}</td><td>{{ r.times_requested }}</td><td>{{ r.total_requested }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+<p class="concept">Concept: <code>LEFT JOIN</code> + <code>COUNT()</code> + <code>COALESCE(SUM())</code> across <code>Blood_Group</code> and <code>Blood_Request</code>.</p>
+{% endblock %}

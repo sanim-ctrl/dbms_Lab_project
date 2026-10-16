@@ -1,3 +1,9 @@
+import os
+import base64
+from contextlib import contextmanager
+
+import mysql.connector
+from mysql.connector import Error
 """db.py -- small MySQL helpers for the Blood Bank Management System.
 
 This module owns EVERY database connection. It uses mysql-connector-python
@@ -79,6 +85,12 @@ def _build_db_config():
     }
 
     ssl_ca = (os.environ.get("DB_SSL_CA") or "").strip()
+    ssl_ca_b64 = (os.environ.get("DB_SSL_CA_B64") or "").strip()
+    if ssl_ca_b64:
+        ca_path = "/tmp/aiven-ca.pem"
+        with open(ca_path, "wb") as ca_file:
+            ca_file.write(base64.b64decode(ssl_ca_b64, validate=True))
+        ssl_ca = ca_path
     if ssl_ca:
         config["ssl_ca"] = ssl_ca
         config["ssl_verify_cert"] = True

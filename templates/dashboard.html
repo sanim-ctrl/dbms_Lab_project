@@ -3,6 +3,7 @@
 {% block content %}
 <h1>Dashboard</h1>
 <p class="muted">Live statistics read directly from the <code>blood_bank_db</code> MySQL database.</p>
+<p><a class="btn btn-primary" href="{{ url_for('admin_login') }}">Admin</a></p>
 
 <div class="cards">
   <div class="card"><span class="card-num">{{ stats.donors }}</span><span class="card-label">Total Donors</span></div>

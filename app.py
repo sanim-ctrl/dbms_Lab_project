@@ -15,14 +15,17 @@ Security notes:
 import os
 import re
 import secrets
-from datetime import date, datetime
+import time
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from functools import wraps
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
     flash, session, abort,
 )
 from mysql.connector import Error
+from werkzeug.security import check_password_hash
 
 import db
 
@@ -31,9 +34,21 @@ import db
 # Application setup
 # --------------------------------------------------------------------------- #
 app = Flask(__name__)
-app.config["SECRET_KEY"] = os.environ.get("FLASK_SECRET_KEY", "dev-insecure-key-change-me")
+# Session signing key: SECRET_KEY is the documented, required variable;
+# FLASK_SECRET_KEY is kept as a legacy fallback so existing deployments that
+# only define FLASK_SECRET_KEY keep working exactly as before.
+app.config["SECRET_KEY"] = (
+    os.environ.get("SECRET_KEY")
+    or os.environ.get("FLASK_SECRET_KEY")
+    or "dev-insecure-key-change-me"
+)
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+# A permanent cookie gets an explicit lifetime, so an admin session expires on
+# its own even if the browser stays open (see ADMIN_SESSION_MINUTES).
+app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(
+    minutes=int(os.environ.get("ADMIN_SESSION_MINUTES", "30"))
+)
 
 LOW_STOCK_THRESHOLD = int(os.environ.get("LOW_STOCK_THRESHOLD", "10"))
 GENDERS = ("Male", "Female", "Other")
@@ -858,6 +873,344 @@ def reports():
 
 
 # --------------------------------------------------------------------------- #
+# Admin approval workflow
+# ---------------------------------------------------------------------------
+# One shared password, read from the environment on every request (never from
+# source code, templates or JavaScript):
+#   ADMIN_PASSWORD_HASH -- a Werkzeug password hash (recommended), generated
+#                          locally with scripts/generate_admin_hash.py
+#   ADMIN_PASSWORD      -- plain-text fallback when hashing is impractical
+# If neither is set, admin access is denied with a configuration error.
+#
+# The pending changes shown on the admin page are the application's existing
+# proposal workflow: Blood_Request rows created with Status='Pending'. They are
+# already stored separately from approved/live data (Approved / Completed /
+# Rejected rows and Blood_Stock), so approving or rejecting them here never
+# rewrites historical records. Every decision is written to Admin_Audit_Log
+# inside the same transaction as the status change.
+# --------------------------------------------------------------------------- #
+ADMIN_SESSION_FLAG = "admin_logged_in"
+
+# Brute-force protection: failed logins are counted per client address inside
+# a sliding window. In-memory is deliberate (no extra dependency); it resets on
+# process restart, which is acceptable for a shared-password admin door.
+LOGIN_WINDOW_SECONDS = int(os.environ.get("ADMIN_LOGIN_WINDOW_SECONDS", "300"))
+LOGIN_MAX_ATTEMPTS = int(os.environ.get("ADMIN_LOGIN_MAX_ATTEMPTS", "5"))
+
+_login_attempts = {}  # client address -> [monotonic timestamps of failures]
+
+
+def _failed_logins(ip):
+    """Prune and return the recent failed-login timestamps for `ip`."""
+    now = time.monotonic()
+    recent = [t for t in _login_attempts.get(ip, []) if now - t < LOGIN_WINDOW_SECONDS]
+    if recent:
+        _login_attempts[ip] = recent
+    else:
+        _login_attempts.pop(ip, None)
+    return recent
+
+
+def _login_is_limited(ip):
+    return len(_failed_logins(ip)) >= LOGIN_MAX_ATTEMPTS
+
+
+def _record_failed_login(ip):
+    _login_attempts.setdefault(ip, []).append(time.monotonic())
+
+
+def reset_login_attempts():
+    """Forget recorded failures (called after a successful login; also used by tests)."""
+    _login_attempts.clear()
+
+
+def admin_secret_key_ok():
+    """True when a strong, private SECRET_KEY is configured.
+
+    The signing key must exist, be reasonably long, and not be the well-known
+    development placeholder. The value itself is never logged or displayed.
+    """
+    key = (os.environ.get("SECRET_KEY") or "").strip()
+    return len(key) >= 32 and key != "dev-insecure-key-change-me"
+
+
+def admin_password_hash():
+    value = (os.environ.get("ADMIN_PASSWORD_HASH") or "").strip()
+    return value or None
+
+
+def admin_password_plain():
+    value = (os.environ.get("ADMIN_PASSWORD") or "").strip()
+    return value or None
+
+
+def admin_config_problem():
+    """Return a secret-free description of missing admin configuration, or None."""
+    problems = []
+    if not admin_secret_key_ok():
+        problems.append(
+            "SECRET_KEY is missing or too weak (set a random string of at least 32 characters)."
+        )
+    if not admin_password_hash() and not admin_password_plain():
+        problems.append(
+            "ADMIN_PASSWORD_HASH (recommended) or ADMIN_PASSWORD is not set."
+        )
+    return " ".join(problems) or None
+
+
+def admin_password_matches(candidate):
+    """Constant-time verification of the shared admin password."""
+    pw_hash = admin_password_hash()
+    if pw_hash:
+        try:
+            return check_password_hash(pw_hash, candidate)
+        except Exception:
+            # Malformed hash in the environment: treat as a failed check and
+            # log only the fact (never the value).
+            app.logger.error("ADMIN_PASSWORD_HASH is not a valid password hash.")
+            return False
+    plain = admin_password_plain()
+    if plain is not None:
+        return secrets.compare_digest(plain.encode("utf-8"), candidate.encode("utf-8"))
+    return False
+
+
+def _admin_config_error():
+    """Render the safe configuration error page (503) for missing admin setup."""
+    return render_template(
+        "error.html",
+        message="Admin access is not configured on this server: " + str(admin_config_problem()),
+    ), 503
+
+
+def require_admin(view):
+    """Protect a route: valid configuration + authenticated admin session.
+
+    Configuration and authentication are both decided SERVER-SIDE from the
+    signed session cookie; no form field, query string, cookie value or client
+    script can grant admin access.
+    """
+
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if admin_config_problem():
+            return _admin_config_error()
+        if not session.get(ADMIN_SESSION_FLAG):
+            if request.method == "GET":
+                return redirect(url_for("admin_login"))
+            # State-changing endpoints fail loudly instead of redirecting.
+            abort(401, description="Admin authentication required.")
+        return view(*args, **kwargs)
+
+    return wrapped
+
+
+@app.route("/admin/login", methods=["GET", "POST"])
+def admin_login():
+    if admin_config_problem():
+        return _admin_config_error()
+    if session.get(ADMIN_SESSION_FLAG):
+        return redirect(url_for("admin_pending"))
+
+    if request.method == "POST":
+        ip = request.remote_addr or "unknown"
+        if _login_is_limited(ip):
+            return render_template(
+                "error.html",
+                message="Too many failed admin login attempts. Please wait a few minutes and try again.",
+            ), 429
+
+        password = request.form.get("password", "")
+        if admin_password_matches(password):
+            reset_login_attempts()
+            # Drop anything carried in the pre-login session, then start a
+            # fresh, permanent (time-limited) session for the admin.
+            session.clear()
+            session.permanent = True
+            session[ADMIN_SESSION_FLAG] = True
+            try:
+                ensure_admin_tables()
+            except Error:
+                app.logger.warning("Could not prepare admin audit tables.")
+            flash("Admin login successful.", "success")
+            return redirect(url_for("admin_pending"))
+
+        _record_failed_login(ip)
+        # Log the event and the client address only -- never the password.
+        app.logger.warning("Failed admin login attempt from %s.", ip)
+        flash("Incorrect admin password.", "error")
+        return render_template("admin_login.html"), 401
+
+    return render_template("admin_login.html")
+
+
+@app.route("/admin/logout", methods=["POST"])
+def admin_logout():
+    # CSRF is enforced for this POST by the global before_request hook.
+    session.clear()
+    flash("Admin session ended.", "success")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/admin")
+@require_admin
+def admin_pending():
+    """List pending changes (proposed blood requests) awaiting a decision."""
+    pending = db.fetch_all(
+        """SELECT br.Request_ID, br.Date, br.Qty, br.Status,
+                  h.Name AS hospital, bg.Blood_Type
+           FROM Blood_Request br
+           JOIN Hospital h      ON br.Hospital_ID = h.Hospital_ID
+           JOIN Blood_Group bg  ON br.Bg_ID = bg.Bg_ID
+           WHERE br.Status = 'Pending'
+           ORDER BY br.Request_ID"""
+    )
+
+    decisions = []
+    try:
+        decisions = db.fetch_all(
+            """SELECT Audit_ID, Proposal_Type, Proposal_ID, Action, Detail, Decided_At
+               FROM Admin_Audit_Log
+               ORDER BY Audit_ID DESC
+               LIMIT 10"""
+        )
+    except Error:
+        # Audit table not created yet (e.g. no DDL privilege): approvals still work.
+        app.logger.warning("Admin_Audit_Log is not readable; hiding the audit list.")
+
+    return render_template("admin_pending.html", pending=pending, decisions=decisions)
+
+
+_admin_tables_ready = None  # None = unknown, True = ensured, False = cannot create
+
+
+def ensure_admin_tables():
+    """Create the audit table once per process, when the DB user is allowed to.
+
+    Degrades gracefully: if the MySQL user lacks the CREATE privilege (or the
+    table is otherwise unavailable), approving and rejecting still work and the
+    audit entry is skipped. Run admin_schema.sql once with an admin account to
+    enable auditing (it is ADDITIVE only -- it never touches existing data).
+    """
+    global _admin_tables_ready
+    if _admin_tables_ready is not None:
+        return
+    try:
+        with db.get_cursor(commit=True) as cur:
+            cur.execute(
+                """CREATE TABLE IF NOT EXISTS Admin_Audit_Log (
+                       Audit_ID      INT          NOT NULL AUTO_INCREMENT,
+                       Proposal_Type VARCHAR(30)  NOT NULL,
+                       Proposal_ID   INT          NOT NULL,
+                       Action        ENUM('Approved','Rejected') NOT NULL,
+                       Detail        VARCHAR(255) NULL,
+                       Decided_At    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                       PRIMARY KEY (Audit_ID),
+                       KEY idx_audit_proposal (Proposal_Type, Proposal_ID)
+                   ) ENGINE=InnoDB"""
+            )
+        _admin_tables_ready = True
+    except Error:
+        _admin_tables_ready = False
+        app.logger.warning(
+            "Admin_Audit_Log could not be created automatically (no DDL privilege?); "
+            "run admin_schema.sql with an admin account to enable the audit log."
+        )
+
+
+def _record_audit(cur, proposal_id, action, detail):
+    """Write one audit row using the transaction's own cursor."""
+    cur.execute(
+        """INSERT INTO Admin_Audit_Log (Proposal_Type, Proposal_ID, Action, Detail)
+           VALUES (%s, %s, %s, %s)""",
+        ("Blood_Request", proposal_id, action, detail),
+    )
+
+
+def _admin_decide(proposal_id, action):
+    """Apply an admin decision to one pending proposal, atomically.
+
+    A single transaction: lock the proposal row, re-check its status, update it
+    and record the audit entry. Any failure rolls the WHOLE decision back, so
+    the proposal stays Pending and can be retried; repeat submissions cannot
+    double-apply because the row is locked and re-validated against 'Pending'.
+    Stock is never touched by approval or rejection.
+    """
+    try:
+        ensure_admin_tables()
+        with db.transaction() as cur:
+            # 1) Lock the proposal row: two admins clicking at once serialize here.
+            cur.execute(
+                "SELECT Request_ID, Status FROM Blood_Request WHERE Request_ID = %s FOR UPDATE",
+                (proposal_id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                raise ValidationError("Proposal not found.")
+            if row["Status"] != "Pending":
+                raise ValidationError(
+                    f"Proposal #{proposal_id} has already been processed (status: {row['Status']})."
+                )
+
+            # 2) Human-readable detail for the audit log (read-only lookup).
+            cur.execute(
+                """SELECT h.Name AS hospital, bg.Blood_Type, br.Qty
+                   FROM Blood_Request br
+                   JOIN Hospital h      ON br.Hospital_ID = h.Hospital_ID
+                   JOIN Blood_Group bg  ON br.Bg_ID = bg.Bg_ID
+                   WHERE br.Request_ID = %s""",
+                (proposal_id,),
+            )
+            info = cur.fetchone() or {}
+
+            # 3) Guarded update: only Pending rows may change, only once.
+            cur.execute(
+                "UPDATE Blood_Request SET Status = %s WHERE Request_ID = %s AND Status = 'Pending'",
+                (action, proposal_id),
+            )
+            if cur.rowcount != 1:
+                raise ValidationError("Proposal was already processed; nothing changed.")
+
+            # 4) Audit entry in the SAME transaction (rolls back with it).
+            detail = None
+            if info:
+                detail = (
+                    f"{info.get('hospital')} - {info.get('Qty')} units of {info.get('Blood_Type')}"
+                )[:255]
+            try:
+                _record_audit(cur, proposal_id, action, detail)
+            except Error as err:
+                # 1146 = table missing, 1142 = INSERT denied: the audit log is
+                # best-effort, so the decision still commits in those cases.
+                if err.errno not in (1142, 1146):
+                    raise
+                app.logger.warning("Admin audit entry skipped (errno %s).", err.errno)
+
+        verb = "approved" if action == "Approved" else "rejected"
+        flash(f"Proposal #{proposal_id} {verb}.", "success")
+    except ValidationError as err:
+        flash(str(err), "error")
+    except Error:
+        # Includes a failure of the audit insert: the transaction rolled back,
+        # so the proposal is untouched and no partial change is visible.
+        app.logger.error("Admin %s of proposal %s failed; rolled back.", action, proposal_id)
+        flash("Could not process the decision due to a database error. No changes were applied.", "error")
+    return redirect(url_for("admin_pending"))
+
+
+@app.route("/admin/proposals/<int:proposal_id>/approve", methods=["POST"])
+@require_admin
+def admin_proposal_approve(proposal_id):
+    return _admin_decide(proposal_id, "Approved")
+
+
+@app.route("/admin/proposals/<int:proposal_id>/reject", methods=["POST"])
+@require_admin
+def admin_proposal_reject(proposal_id):
+    return _admin_decide(proposal_id, "Rejected")
+
+
+# --------------------------------------------------------------------------- #
 # Error handlers
 # --------------------------------------------------------------------------- #
 @app.errorhandler(Error)
@@ -870,6 +1223,16 @@ def handle_db_error(err):
 @app.errorhandler(400)
 def handle_bad_request(err):
     return render_template("error.html", message=err.description or "Bad request."), 400
+
+
+@app.errorhandler(401)
+def handle_unauthorized(err):
+    return render_template("error.html", message=err.description or "Authentication required."), 401
+
+
+@app.errorhandler(429)
+def handle_rate_limited(err):
+    return render_template("error.html", message=err.description or "Too many attempts. Please try again later."), 429
 
 
 @app.errorhandler(404)

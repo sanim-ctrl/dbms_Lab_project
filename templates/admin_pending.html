@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Admin &ndash; Pending Changes{% endblock %}
+{% block content %}
+<h1>Admin &ndash; Pending Changes</h1>
+<p class="muted">
+  Proposed changes waiting for a decision. Approving or rejecting is recorded in the
+  <code>Admin_Audit_Log</code> table; approved and historical records are never rewritten by a rejection.
+</p>
+
+<form method="post" action="{{ url_for('admin_logout') }}" class="inline">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button type="submit" class="btn btn-secondary">Log out</button>
+</form>
+
+<h2>Awaiting Approval</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Record ID</th><th>Record Type</th><th>Proposed Action</th>
+      <th>Submitted Details</th><th>Submitted (Request Date)</th><th>Status</th><th>Actions</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for p in pending %}
+    <tr>
+      <td>#{{ p.Request_ID }}</td>
+      <td>Blood Request</td>
+      <td>Approve blood request</td>
+      <td>{{ p.hospital }} &mdash; {{ p.Qty }} units of <strong>{{ p.Blood_Type }}</strong></td>
+      <td>{{ p.Date }}</td>
+      <td><span class="status status-{{ p.Status|lower }}">{{ p.Status }}</span></td>
+      <td class="actions">
+        <form method="post" action="{{ url_for('admin_proposal_approve', proposal_id=p.Request_ID) }}" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn btn-small btn-primary">Approve</button>
+        </form>
+        <form method="post" action="{{ url_for('admin_proposal_reject', proposal_id=p.Request_ID) }}" class="inline">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="btn btn-small btn-danger">Reject</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="muted">No pending changes awaiting approval.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Recent Decisions</h2>
+<table>
+  <thead><tr><th>#</th><th>Record Type</th><th>Record ID</th><th>Decision</th><th>Details</th><th>Decided At</th></tr></thead>
+  <tbody>
+    {% for d in decisions %}
+    <tr>
+      <td>{{ d.Audit_ID }}</td>
+      <td>{{ d.Proposal_Type }}</td>
+      <td>#{{ d.Proposal_ID }}</td>
+      <td><span class="status status-{{ d.Action|lower }}">{{ d.Action }}</span></td>
+      <td>{{ d.Detail or '—' }}</td>
+      <td>{{ d.Decided_At }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="muted">No decisions recorded yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

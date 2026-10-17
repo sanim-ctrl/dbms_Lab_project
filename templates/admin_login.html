@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Admin Login{% endblock %}
+{% block content %}
+<h1>Admin Login</h1>
+<p class="muted">Enter the shared admin password to review changes that are waiting for approval.</p>
+
+<form class="form" method="post" action="{{ url_for('admin_login') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+  <label>Admin Password
+    <input type="password" name="password" autocomplete="current-password" required autofocus>
+  </label>
+
+  <div class="form-actions">
+    <button type="submit" class="btn btn-primary">Log in</button>
+    <a class="btn btn-secondary" href="{{ url_for('dashboard') }}">Cancel</a>
+  </div>
+</form>
+<p class="muted">Repeated failed attempts are rate-limited.</p>
+{% endblock %}

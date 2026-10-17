@@ -35,5 +35,12 @@ services:
       # --- Flask ---
       - key: FLASK_SECRET_KEY
         generateValue: true
+      # --- Admin approval workflow (see README §22) ---
+      # SECRET_KEY signs admin sessions; ADMIN_PASSWORD_HASH is set in the
+      # dashboard (never in this file). ADMIN_PASSWORD is an optional fallback.
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ADMIN_PASSWORD_HASH
+        sync: false
       - key: LOW_STOCK_THRESHOLD
         value: "10"

@@ -703,7 +703,8 @@ To get the CA file onto Render, add a **Secret File** named `aiven-ca.pem`
 `db.py` builds the connection from environment variables only:
 `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`, plus the TLS options
 `DB_SSL_CA` (enables verified TLS when set) and optionally `DB_SSL_DISABLED`
-or `DB_SSL_VERIFY_IDENTITY`. `app.py` reads `FLASK_SECRET_KEY`,
+or `DB_SSL_VERIFY_IDENTITY`. `app.py` reads `SECRET_KEY` (admin sessions),
+`ADMIN_PASSWORD_HASH` / `ADMIN_PASSWORD` (see §22), the legacy `FLASK_SECRET_KEY`,
 `LOW_STOCK_THRESHOLD`, and (for local runs) `HOST`, `PORT`, `FLASK_DEBUG`.
 **Local development is unaffected**: with `DB_SSL_CA` unset, the connection
 behaves exactly as before.
@@ -720,25 +721,126 @@ deploy anything.
 
 ---
 
+## 22. Admin Approval Workflow (password-protected)
+
+The dashboard has one extra button, **Admin**. It opens a password page; after
+successful authentication it shows a single page listing the **pending changes**
+that need a decision, each with **Approve** and **Reject** buttons. There is no
+public admin registration and no separate admin application.
+
+### 22.1 Where "pending changes" come from
+
+The application already has a proposal workflow: a blood request is inserted as
+`Status = 'Pending'`, and only later moves to `Approved` / `Rejected` /
+`Completed` (see §15). Those `Pending` rows are the proposed changes shown to the
+admin — they are already stored separately from approved/live data, so the admin
+page needs no parallel proposal table and no existing workflow is bypassed.
+
+Donor, hospital, donation and stock edits apply immediately in this application
+(there is no proposal stage for them), so they are intentionally **not** routed
+through a new approval queue.
+
+### 22.2 Decisions are atomic and audited
+
+Approving or rejecting one proposal runs in a single MySQL transaction:
+
+1. the proposal row is locked (`SELECT ... FOR UPDATE`) and must still be
+   `Pending`;
+2. its status is updated with a guarded `UPDATE` (`... AND Status = 'Pending'`),
+   so a repeated click or a second admin cannot apply it twice;
+3. the decision, proposal id, a short detail string and the timestamp are
+   written to `Admin_Audit_Log`.
+
+Any failure rolls the whole decision back, leaving the proposal `Pending` so it
+can be retried. Approval and rejection never touch `Blood_Stock`, so they cannot
+double-deduct or make stock negative (stock moves only on *Fulfil*).
+
+### 22.3 Environment variables
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `SECRET_KEY` | yes (for admin) | Signs the admin session cookie; at least 32 random characters |
+| `ADMIN_PASSWORD_HASH` | recommended | Werkzeug hash of the shared admin password |
+| `ADMIN_PASSWORD` | fallback | Plain-text shared password, used only when no hash is set |
+| `ADMIN_SESSION_MINUTES` | no | Admin session lifetime in minutes (default 30) |
+| `ADMIN_LOGIN_MAX_ATTEMPTS` | no | Failed logins per window before 429 (default 5) |
+| `ADMIN_LOGIN_WINDOW_SECONDS` | no | Length of that window (default 300) |
+
+`FLASK_SECRET_KEY` is kept as a legacy fallback for the rest of the app, but
+admin access specifically requires a strong `SECRET_KEY`. If `SECRET_KEY` is
+missing/too weak, or neither password variable is set, admin pages return a
+clear configuration error (HTTP 503) and no admin session can be created. The
+password and its hash are never placed in HTML, JavaScript, sessions or logs.
+
+### 22.4 Generate the password hash (no plaintext in shell history)
+
+```
+python scripts/generate_admin_hash.py      # prompts twice, prints ADMIN_PASSWORD_HASH=...
+```
+
+Copy the printed value into your **private** `.env` (never into source):
+
+```
+SECRET_KEY=<a long random string, e.g. python3 -c "import secrets; print(secrets.token_hex(32))">
+ADMIN_PASSWORD_HASH=<the printed hash>
+```
+
+On **Vercel**: Project Settings → Environment Variables → add `SECRET_KEY` and
+`ADMIN_PASSWORD_HASH` (same values) for the Production/Preview environments, then
+redeploy. Do not commit them.
+
+### 22.5 Create the audit table (once)
+
+The app tries `CREATE TABLE IF NOT EXISTS Admin_Audit_Log` the first time an
+admin logs in. If the MySQL user may not create tables, run the additive
+migration once with an admin account:
+
+```
+mysql -u <admin_user> -p blood_bank_db < admin_schema.sql
+```
+
+The migration only adds the audit table; it never drops or rewrites existing
+data. If the audit table is unavailable, decisions still work (the audit entry
+is skipped with a server-side warning).
+
+### 22.6 Tests
+
+```
+python tests/test_admin.py     # admin login, access control, CSRF, approve/reject,
+                               # duplicates, rollback, logout, config safety
+python tests/test_db.py        # existing schema + behaviour suite (unchanged)
+```
+
+The admin suite creates a few temporary pending requests and deletes them (and
+their audit rows) in `finally`. Audit-row assertions are reported as **skipped**
+when the audit table is not writable in the current environment.
+
+---
+
 ## Project Structure
 
 ```
 DBMSproject/
-├── app.py                 # Flask routes (CRUD, workflow, reports)
+├── app.py                 # Flask routes (CRUD, workflow, reports, admin)
 ├── db.py                  # MySQL connection helpers (no ORM)
 ├── schema.sql             # database + six tables (highest priority)
+├── admin_schema.sql       # ADDITIVE migration: Admin_Audit_Log (+ run once)
 ├── seed.sql               # sample data, consistent with stock formula
 ├── queries.sql            # 18 demonstration queries
 ├── requirements.txt       # Flask, mysql-connector-python, gunicorn
 ├── Procfile               # Gunicorn start command for Render
 ├── render.yaml            # optional Render Blueprint (env-var keys, no secrets)
-├── .env.example           # template config (DB_* , TLS, FLASK_SECRET_KEY)
+├── .env.example           # template config (DB_*, TLS, SECRET_KEY, ADMIN_PASSWORD_HASH)
 ├── .gitignore
 ├── README.md
+├── scripts/
+│   └── generate_admin_hash.py  # interactive hash generator (no plaintext on CLI)
 ├── templates/             # base, dashboard, donors, donations, stock,
-│                          # hospitals, requests, reports, forms, error
+│                          # hospitals, requests, reports, forms, error,
+│                          # admin_login, admin_pending
 ├── tests/
-│   └── test_db.py         # self-cleaning schema + behaviour test suite
+│   ├── test_db.py         # self-cleaning schema + behaviour test suite
+│   └── test_admin.py      # admin approval workflow tests (self-cleaning)
 └── static/
     ├── css/style.css      # white + green theme, responsive
     └── js/main.js         # sidebar toggle + donation group auto-select
@@ -752,6 +854,11 @@ DBMSproject/
   no SQL string is built from user input.
 - **CSRF:** all forms include a per-session token; any POST without a valid
   token is rejected with HTTP 400.
+- **Admin access:** a single shared password read from the environment
+  (`ADMIN_PASSWORD_HASH`, or `ADMIN_PASSWORD` as a fallback); state-changing
+  admin actions are POST-only, CSRF-protected, rate-limited and checked against
+  the signed session on every request. The plaintext and its hash never reach the
+  browser, and admin routes fail safely (HTTP 503) when configuration is missing.
 - **Secrets:** credentials live in `.env`, which is listed in `.gitignore` and
   never committed.
 - **Errors:** database errors are logged server-side; users see a friendly

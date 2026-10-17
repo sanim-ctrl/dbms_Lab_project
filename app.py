@@ -170,20 +170,20 @@ def hospitals():
 # --------------------------------------------------------------------------- #
 @app.route("/")
 def dashboard():
-    def scalar(sql, params=None):
-        row = db.fetch_one(sql, params)
-        return row["value"] if row else 0
-
-    stats = {
-        "donors": scalar("SELECT COUNT(*) AS value FROM Donor"),
-        "hospitals": scalar("SELECT COUNT(*) AS value FROM Hospital"),
-        "donations": scalar("SELECT COUNT(*) AS value FROM Donation"),
-        "donated_units": scalar("SELECT COALESCE(SUM(Qty),0) AS value FROM Donation"),
-        "pending": scalar("SELECT COUNT(*) AS value FROM Blood_Request WHERE Status='Pending'"),
-        "approved": scalar("SELECT COUNT(*) AS value FROM Blood_Request WHERE Status='Approved'"),
-        "completed": scalar("SELECT COUNT(*) AS value FROM Blood_Request WHERE Status='Completed'"),
-        "rejected": scalar("SELECT COUNT(*) AS value FROM Blood_Request WHERE Status='Rejected'"),
-    }
+    # Read every counter in ONE round trip. The database is remote, so each
+    # extra statement costs a full network round trip; eight separate COUNT
+    # queries were eight round trips for one page.
+    stats = db.fetch_one(
+        """SELECT
+             (SELECT COUNT(*) FROM Donor)                                  AS donors,
+             (SELECT COUNT(*) FROM Hospital)                               AS hospitals,
+             (SELECT COUNT(*) FROM Donation)                               AS donations,
+             (SELECT COALESCE(SUM(Qty),0) FROM Donation)                   AS donated_units,
+             (SELECT COUNT(*) FROM Blood_Request WHERE Status='Pending')   AS pending,
+             (SELECT COUNT(*) FROM Blood_Request WHERE Status='Approved')  AS approved,
+             (SELECT COUNT(*) FROM Blood_Request WHERE Status='Completed') AS completed,
+             (SELECT COUNT(*) FROM Blood_Request WHERE Status='Rejected')  AS rejected"""
+    ) or {}
 
     stock = db.fetch_all(
         """SELECT bg.Blood_Type, s.Total_Qty, s.Last_Updated

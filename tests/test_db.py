@@ -13,7 +13,7 @@ This script never drops or truncates tables. It only:
 
 Usage
 -----
-    python tests/test_db.py            # full suite: verification + behaviour
+    python tests/test_db.py            # full suite: verification + behaviour + connection lifecycle
     python tests/test_db.py --check    # read-only: connection, tables, FKs, data
 
 Exit codes
@@ -31,6 +31,7 @@ import argparse
 import os
 import re
 import sys
+import threading
 from decimal import Decimal
 
 # Make the project root importable no matter where the script is run from.
@@ -38,7 +39,8 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE_DIR)
 
 import db  # noqa: E402  (import after sys.path tweak)
-from mysql.connector import Error  # noqa: E402
+import mysql.connector  # noqa: E402
+from mysql.connector import Error, InterfaceError  # noqa: E402
 
 
 # --------------------------------------------------------------------------- #
@@ -480,6 +482,230 @@ def run_behaviour(results):
 
 
 # --------------------------------------------------------------------------- #
+# Section C: connection lifecycle -- reuse, stale recovery, atomicity, threads
+# --------------------------------------------------------------------------- #
+def raw_connection():
+    """Open an independent connection, bypassing db's per-thread cache.
+
+    Used to observe server-side truth (what is really committed) and to KILL
+    the cached connection when simulating an idle timeout / server restart.
+    """
+    return mysql.connector.connect(**db.DB_CONFIG)
+
+
+def hospital_by_phone(conn, phone):
+    """Look up a Hospital row by phone from an independent session."""
+    cur = conn.cursor(dictionary=True)
+    cur.execute("SELECT Hospital_ID FROM Hospital WHERE Phone = %s", (phone,))
+    row = cur.fetchone()
+    cur.close()
+    return row
+
+
+def run_connection_tests(results):
+    print("\n== C. Connection lifecycle (reuse, stale recovery, atomicity, threads) ==")
+
+    db.close_connection()  # start from a known state in this thread
+    cleanup_hospitals = []
+    observer = None
+    try:
+        # -------------------------------------------------------------- #
+        # C1. Connection reuse: many queries, one connection
+        # -------------------------------------------------------------- #
+        c1 = db.get_connection()
+        c2 = db.get_connection()
+        results.check("get_connection returns the cached connection", c1 is c2)
+        db.fetch_one("SELECT 1 AS ok")
+        results.check("queries reuse the cached connection (not closed per call)",
+                      db.get_connection() is c1)
+
+        # -------------------------------------------------------------- #
+        # C2. Reuse is verified with an explicit ping(reconnect=False)
+        # -------------------------------------------------------------- #
+        pings = []
+        real_ping = c1.ping
+
+        def counting_ping(reconnect=False, *args, **kwargs):
+            pings.append(reconnect)
+            return real_ping(reconnect=reconnect, *args, **kwargs)
+
+        c1.ping = counting_ping
+        db.fetch_one("SELECT 1 AS ok")
+        c1.ping = real_ping  # restore before anything else trips on it
+        results.check("cached connection is pinged before reuse",
+                      len(pings) >= 1, f"pings={pings}")
+        results.check("ping passes reconnect=False (never silent reconnect)",
+                      all(r is False for r in pings), f"pings={pings}")
+
+        # -------------------------------------------------------------- #
+        # C3. Stale connection: the server kills it, the next call recovers
+        # -------------------------------------------------------------- #
+        victim_id = db.get_connection().connection_id
+        killer = raw_connection()
+        kcur = killer.cursor()
+        kcur.execute(f"KILL {victim_id}")
+        kcur.close()
+        killer.close()
+        row = db.fetch_one("SELECT 1 AS ok")
+        results.check("query succeeds after the server killed the connection",
+                      row == {"ok": 1}, str(row))
+        new_id = db.get_connection().connection_id
+        results.check("dead connection replaced by a fresh session",
+                      new_id != victim_id, f"old={victim_id} new={new_id}")
+
+        # -------------------------------------------------------------- #
+        # C4. A connection lost INSIDE a transaction never silently
+        #     reconnects -- the transaction fails as a unit instead
+        # -------------------------------------------------------------- #
+        victim_id = db.get_connection().connection_id
+        killer = raw_connection()
+        raised = None
+        try:
+            with db.transaction() as cur:
+                cur.execute("SELECT 1 AS ok")
+                kcur = killer.cursor()
+                kcur.execute(f"KILL {victim_id}")
+                kcur.close()
+                # The cached connection is now dead and the transaction is
+                # still open: get_connection() must raise, NOT reconnect.
+                db.get_connection()
+        except Error as err:
+            raised = err
+        finally:
+            killer.close()
+        results.check("connection lost mid-transaction raises (no silent reconnect)",
+                      raised is not None, "no error raised")
+        results.check("connection recovers after the aborted transaction",
+                      db.fetch_one("SELECT 1 AS ok") == {"ok": 1})
+
+        # -------------------------------------------------------------- #
+        # C5. transaction() + autocommit=True: rollback, commit, and
+        #     uncommitted work invisible to other sessions
+        # -------------------------------------------------------------- #
+        base_phone = "9550000101"
+        db.execute(
+            "INSERT INTO Hospital (Name, Address, Phone) VALUES (%s, %s, %s)",
+            ("TESTX ConnC", "Connection Test Road", base_phone),
+        )
+        row = db.fetch_one("SELECT Hospital_ID FROM Hospital WHERE Phone = %s", (base_phone,))
+        results.check("C5 setup: temp hospital row created", row is not None)
+        if row:
+            hid = row["Hospital_ID"]
+            cleanup_hospitals.append(hid)
+            observer = raw_connection()
+
+            # rollback: an exception inside the block discards every statement
+            rolled_back = False
+            try:
+                with db.transaction() as cur:
+                    cur.execute("UPDATE Hospital SET Phone = %s WHERE Hospital_ID = %s",
+                                ("9550000102", hid))
+                    results.check("uncommitted change invisible to other sessions",
+                                  hospital_by_phone(observer, "9550000102") is None)
+                    raise RuntimeError("force rollback")
+            except RuntimeError:
+                rolled_back = True
+            results.check("exception inside transaction() propagated", rolled_back)
+            results.check("rollback discarded the UPDATE (server-side truth)",
+                          hospital_by_phone(observer, base_phone) is not None
+                          and hospital_by_phone(observer, "9550000102") is None)
+
+            # commit: statements become visible to other sessions on exit
+            with db.transaction() as cur:
+                cur.execute("UPDATE Hospital SET Phone = %s WHERE Hospital_ID = %s",
+                            ("9550000103", hid))
+            results.check("commit made the UPDATE visible to other sessions",
+                          hospital_by_phone(observer, "9550000103") is not None)
+
+            # the reused connection is transaction-free afterwards: a plain
+            # autocommit write is durable without any explicit commit
+            db.execute("UPDATE Hospital SET Phone = %s WHERE Hospital_ID = %s",
+                       ("9550000104", hid))
+            results.check("autocommit write durable without an explicit commit",
+                          hospital_by_phone(observer, "9550000104") is not None)
+
+        # -------------------------------------------------------------- #
+        # C6. Concurrent threads: one connection per thread, all commit
+        # -------------------------------------------------------------- #
+        workers = 5
+        cids = {}
+        errors = []
+
+        def worker(idx):
+            try:
+                with db.transaction() as cur:
+                    cur.execute(
+                        "INSERT INTO Hospital (Name, Address, Phone) VALUES (%s, %s, %s)",
+                        (f"TESTX Thread{idx}", "Thread Test Road", f"955000030{idx}"),
+                    )
+                    cur.execute("SELECT CONNECTION_ID() AS cid")
+                    cids[idx] = cur.fetchone()["cid"]
+            except Exception as err:  # reported through results below
+                errors.append((idx, err))
+            finally:
+                db.close_connection()  # threads must not leak pooled connections
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(workers)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+        results.check("all worker threads finished without error", not errors, str(errors))
+        ids = [cids.get(i) for i in range(workers)]
+        results.check("every worker thread got a connection", all(ids), str(ids))
+        results.check("each thread used its OWN connection (no sharing)",
+                      len(set(ids)) == workers, f"connection ids: {ids}")
+        stored = db.fetch_all("SELECT Phone FROM Hospital WHERE Name LIKE 'TESTX Thread%'")
+        results.check("every thread's transaction committed",
+                      {r["Phone"] for r in stored} == {f"955000030{i}" for i in range(workers)},
+                      str(stored))
+
+        # -------------------------------------------------------------- #
+        # C7. A failed cursor creation drops the bad cached connection
+        # -------------------------------------------------------------- #
+        conn = db.get_connection()
+        dead_id = conn.connection_id
+        real_cursor = conn.cursor
+
+        def broken_cursor(*args, **kwargs):
+            raise InterfaceError("simulated cursor-creation failure")
+
+        conn.cursor = broken_cursor
+        raised = None
+        try:
+            db.fetch_one("SELECT 1 AS ok")
+        except InterfaceError as err:
+            raised = err
+        conn.cursor = real_cursor  # restore (attribute only; object is discarded)
+        results.check("cursor-creation failure surfaces to the caller",
+                      raised is not None, "no error raised")
+        results.check("bad cached connection was dropped and replaced",
+                      db.get_connection().connection_id != dead_id,
+                      f"old={dead_id}")
+
+    finally:
+        # ---------------------------------------------------------- #
+        # Cleanup: remove exactly what we created, never touch the rest
+        # ---------------------------------------------------------- #
+        if observer is not None:
+            try:
+                observer.close()
+            except Error:
+                pass
+        try:
+            db.execute("DELETE FROM Hospital WHERE Name LIKE 'TESTX Thread%'")
+        except Error:
+            pass
+        for hid in cleanup_hospitals:
+            try:
+                db.execute("DELETE FROM Hospital WHERE Hospital_ID = %s", (hid,))
+            except Error:
+                pass
+        db.close_connection()
+        print("\n  (cleanup: connection-test rows removed, connections closed)")
+
+
+# --------------------------------------------------------------------------- #
 def main():
     parser = argparse.ArgumentParser(description="Blood Bank database tests")
     parser.add_argument("--check", action="store_true",
@@ -512,6 +738,7 @@ def main():
 
     if not args.check and verified:
         run_behaviour(results)
+        run_connection_tests(results)
 
     print("\n== Summary ==")
     print(f"  passed: {results.passed}")

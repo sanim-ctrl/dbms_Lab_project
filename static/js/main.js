@@ -1,15 +1,6 @@
 // main.js -- small UI enhancements only. No data is stored here.
 
 document.addEventListener("DOMContentLoaded", function () {
-  // Mobile sidebar toggle.
-  var toggle = document.getElementById("menuToggle");
-  var sidebar = document.getElementById("sidebar");
-  if (toggle && sidebar) {
-    toggle.addEventListener("click", function () {
-      sidebar.classList.toggle("open");
-    });
-  }
-
   // Auto-select the donor's registered blood group on the donation form.
   // This is a convenience only; the server validates the match regardless.
   var donorSelect = document.getElementById("donorSelect");

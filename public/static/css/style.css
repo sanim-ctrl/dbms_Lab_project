@@ -67,6 +67,12 @@ code { background: #f2f4f6; padding: 1px 4px; border-radius: 3px; font-size: .85
   outline: 2px solid var(--green);
   outline-offset: 2px;
 }
+.nav-icon { width: 16px; height: 16px; flex: 0 0 auto; vertical-align: -0.125em; }
+.navbar-custom .nav-link-profile {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+}
 .navbar-custom .navbar-toggler {
   border-color: var(--border);
   padding: .35rem .5rem;
@@ -185,6 +191,32 @@ tbody tr:hover { background: #fafcfb; }
 .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
 @media (max-width: 820px) { .two-col { grid-template-columns: 1fr; } }
 
+/* Profile page */
+.profile-card { max-width: 520px; margin-top: 1rem; }
+.profile-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.2rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.profile-avatar {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--green-light);
+  color: var(--green-dark);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.profile-avatar svg { width: 28px; height: 28px; }
+.profile-title { margin: 0; font-size: 1.2rem; color: var(--text); }
+.profile-table { margin-bottom: 1.25rem; }
+.profile-table th { width: 38%; color: var(--text); }
+
 /* Responsive */
 @media (max-width: 991.98px) {
   .navbar-custom .navbar-collapse {
@@ -194,6 +226,7 @@ tbody tr:hover { background: #fafcfb; }
   }
   .navbar-custom .navbar-nav { gap: 0; }
   .navbar-custom .nav-link { padding: .6rem .7rem; }
+  .navbar-custom .nav-link-profile { display: flex; }
 }
 
 @media (max-width: 760px) {

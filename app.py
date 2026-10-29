@@ -1052,6 +1052,24 @@ def admin_logout():
     return redirect(url_for("dashboard"))
 
 
+@app.route("/admin/profile")
+@app.route("/profile")
+@require_admin
+def profile():
+    """Display the currently authenticated user's profile information."""
+    lifetime_minutes = int(os.environ.get("ADMIN_SESSION_MINUTES", "30"))
+    user = {
+        "role": "Administrator",
+        "name": session.get("name") or session.get("username") or os.environ.get("ADMIN_NAME"),
+        "email": session.get("email") or os.environ.get("ADMIN_EMAIL"),
+    }
+    return render_template(
+        "profile.html",
+        user=user,
+        session_lifetime=f"{lifetime_minutes} minutes",
+    )
+
+
 @app.route("/admin")
 @require_admin
 def admin_pending():

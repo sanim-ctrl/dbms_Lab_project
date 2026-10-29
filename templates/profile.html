@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Profile &ndash; Blood Bank Management System{% endblock %}
+{% block content %}
+<h1>User Profile</h1>
+<p class="muted">Account and authentication details for the current session.</p>
+
+<div class="card profile-card">
+  <div class="profile-header">
+    <div class="profile-avatar" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="currentColor" focusable="false">
+        <path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/>
+      </svg>
+    </div>
+    <div>
+      <h2 class="profile-title">{{ user.name if user.name else 'Administrator' }}</h2>
+      <span class="status status-completed">Active Session</span>
+    </div>
+  </div>
+
+  <table class="profile-table">
+    <tbody>
+      <tr>
+        <th>Role</th>
+        <td><span class="status status-approved">{{ user.role }}</span></td>
+      </tr>
+      {% if user.name %}
+      <tr>
+        <th>Name</th>
+        <td>{{ user.name }}</td>
+      </tr>
+      {% endif %}
+      {% if user.email %}
+      <tr>
+        <th>Email</th>
+        <td>{{ user.email }}</td>
+      </tr>
+      {% endif %}
+      <tr>
+        <th>Session Status</th>
+        <td><span class="badge badge-ok">Authenticated</span></td>
+      </tr>
+      <tr>
+        <th>Session Lifetime</th>
+        <td>{{ session_lifetime }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="form-actions d-flex flex-wrap gap-2">
+    <a href="{{ url_for('admin_pending') }}" class="btn btn-primary">Pending Approvals</a>
+    <form method="post" action="{{ url_for('admin_logout') }}" class="inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-secondary">Log out</button>
+    </form>
+    <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">Dashboard</a>
+  </div>
+</div>
+{% endblock %}

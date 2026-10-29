@@ -12,12 +12,12 @@
   <p><a class="btn btn-secondary" href="{{ url_for('donors') }}">&larr; Back to Donors</a></p>
 
   <table>
-    <thead><tr><th>#</th><th>Date</th><th>Blood Group</th><th>Quantity</th></tr></thead>
+    <thead><tr><th>#</th><th>Date</th><th>Blood Group</th><th>Units Donated</th></tr></thead>
     <tbody>
       {% for row in history %}
       <tr>
         <td>{{ row.Donation_ID }}</td><td>{{ row.Donation_Date }}</td>
-        <td>{{ row.Blood_Type }}</td><td>{{ row.Qty }}</td>
+        <td>{{ row.Blood_Type }}</td><td>{{ row.Units_Donated }}</td>
       </tr>
       {% else %}
       <tr><td colspan="4" class="muted">This donor has no donations yet.</td></tr>
@@ -59,8 +59,10 @@
       <input type="date" name="donation_date" value="{{ today }}" required>
     </label>
 
-    <label>Quantity (units)
-      <input type="number" name="qty" min="0.01" step="0.01" required>
+    <label>Units Donated
+      <input type="number" name="units_donated" id="unitsDonated"
+             min="1" step="1" value="1" required>
+      <small class="muted">Whole units, minimum 1.</small>
     </label>
 
     <button type="submit" class="btn btn-primary">Record Donation</button>
@@ -88,7 +90,7 @@
 
   <table>
     <thead>
-      <tr><th>#</th><th>Donor</th><th>Blood Group</th><th>Date</th><th>Quantity</th></tr>
+      <tr><th>#</th><th>Donor</th><th>Blood Group</th><th>Date</th><th>Units Donated</th></tr>
     </thead>
     <tbody>
       {% for row in history %}
@@ -97,7 +99,7 @@
         <td><a href="{{ url_for('donor_donations', donor_id=row.Donor_ID) }}">{{ row.donor }}</a></td>
         <td>{{ row.Blood_Type }}</td>
         <td>{{ row.Donation_Date }}</td>
-        <td>{{ row.Qty }}</td>
+        <td>{{ row.Units_Donated }}</td>
       </tr>
       {% else %}
       <tr><td colspan="5" class="muted">No donations match the filter.</td></tr>

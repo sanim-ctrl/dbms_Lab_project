@@ -54,20 +54,21 @@ INSERT INTO Donor (Donor_ID, Name, Age, Gender, Phone, Bg_ID) VALUES
 
 -- -----------------------------------------------------------------------------
 -- 3. Donations (12 records). Bg_ID must match the donor's registered group.
+--    Units_Donated is a whole number of units per donation event.
 -- -----------------------------------------------------------------------------
-INSERT INTO Donation (Donation_ID, Donor_ID, Bg_ID, Donation_Date, Qty) VALUES
-    (1,  1,  1, '2026-01-05', 2.00),   -- Arjun  -> A+
-    (2,  2,  7, '2026-01-12', 1.00),   -- Bilal  -> O+
-    (3,  3,  3, '2026-01-20', 2.00),   -- Chitra -> B+
-    (4,  5,  2, '2026-02-02', 1.00),   -- Elena  -> A-
-    (5,  1,  1, '2026-02-15', 1.00),   -- Arjun  -> A+
-    (6,  7,  4, '2026-02-20', 2.00),   -- Gita   -> B-
-    (7,  6,  8, '2026-03-01', 1.00),   -- Farhan -> O-
-    (8,  4,  5, '2026-03-05', 1.00),   -- Deepak -> AB+
-    (9,  8,  6, '2026-03-10', 1.00),   -- Harish -> AB-
-    (10, 2,  7, '2026-03-18', 2.00),   -- Bilal  -> O+
-    (11, 11, 3, '2026-04-02', 1.00),   -- Kavya  -> B+
-    (12, 9,  1, '2026-04-09', 3.00);   -- Iman   -> A+
+INSERT INTO Donation (Donation_ID, Donor_ID, Bg_ID, Donation_Date, Units_Donated) VALUES
+    (1,  1,  1, '2026-01-05', 2),   -- Arjun  -> A+
+    (2,  2,  7, '2026-01-12', 1),   -- Bilal  -> O+
+    (3,  3,  3, '2026-01-20', 2),   -- Chitra -> B+
+    (4,  5,  2, '2026-02-02', 1),   -- Elena  -> A-
+    (5,  1,  1, '2026-02-15', 1),   -- Arjun  -> A+
+    (6,  7,  4, '2026-02-20', 2),   -- Gita   -> B-
+    (7,  6,  8, '2026-03-01', 1),   -- Farhan -> O-
+    (8,  4,  5, '2026-03-05', 1),   -- Deepak -> AB+
+    (9,  8,  6, '2026-03-10', 1),   -- Harish -> AB-
+    (10, 2,  7, '2026-03-18', 2),   -- Bilal  -> O+
+    (11, 11, 3, '2026-04-02', 1),   -- Kavya  -> B+
+    (12, 9,  1, '2026-04-09', 3);   -- Iman   -> A+
 --
 -- Totals donated per group (used by the stock reconciliation below):
 --   A+  = 2+1+3 = 6      A-  = 1

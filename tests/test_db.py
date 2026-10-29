@@ -163,9 +163,25 @@ def run_verification(results):
         (db.DB_CONFIG["database"],),
     )
     check_names = {r["name"] for r in check_rows}
-    for chk in ("chk_donor_age", "chk_donation_qty", "chk_request_qty",
+    for chk in ("chk_donor_age", "chk_donation_units", "chk_request_qty",
                 "chk_stock_non_negative", "chk_blood_type"):
         results.check(f"check constraint: {chk}", chk in check_names)
+
+    # A5b Donation.Units_Donated is a positive integer column with default 1.
+    units_col = db.fetch_one(
+        "SELECT DATA_TYPE, COLUMN_TYPE, IS_NULLABLE, COLUMN_DEFAULT "
+        "FROM information_schema.columns "
+        "WHERE table_schema = %s AND table_name = 'Donation' "
+        "AND column_name = 'Units_Donated'",
+        (db.DB_CONFIG["database"],),
+    )
+    results.check("Donation.Units_Donated exists", units_col is not None, str(units_col))
+    results.check("Donation.Units_Donated is an integer",
+                  units_col is not None and units_col["DATA_TYPE"] == "int", str(units_col))
+    results.check("Donation.Units_Donated is NOT NULL",
+                  units_col is not None and units_col["IS_NULLABLE"] == "NO", str(units_col))
+    results.check("Donation.Units_Donated defaults to 1",
+                  units_col is not None and str(units_col["COLUMN_DEFAULT"]) == "1", str(units_col))
 
     # A6 sample data present (minimums from the brief)
     results.check("8 blood groups", scalar("SELECT COUNT(*) AS n FROM Blood_Group") == 8)
@@ -183,7 +199,7 @@ def run_verification(results):
     #    check: stored must equal opening + donations - completed).
     opening = {1: 20, 2: 15, 3: 18, 4: 10, 5: 8, 6: 5, 7: 25, 8: 7}
     donated = {r["Bg_ID"]: r["qty"] for r in db.fetch_all(
-        "SELECT Bg_ID, COALESCE(SUM(Qty),0) AS qty FROM Donation GROUP BY Bg_ID")}
+        "SELECT Bg_ID, COALESCE(SUM(Units_Donated),0) AS qty FROM Donation GROUP BY Bg_ID")}
     completed = {r["Bg_ID"]: r["qty"] for r in db.fetch_all(
         "SELECT Bg_ID, COALESCE(SUM(Qty),0) AS qty FROM Blood_Request "
         "WHERE Status = 'Completed' GROUP BY Bg_ID")}
@@ -293,39 +309,95 @@ def run_behaviour(results):
             created["hospitals"].append(h1["Hospital_ID"])
 
         # -------------------------------------------------------------- #
-        # B4. Donation increases stock (exactly once)
+        # B4. Donation form: Units Donated increases stock exactly once
         # -------------------------------------------------------------- #
-        before = scalar("SELECT Total_Qty FROM Blood_Stock WHERE Bg_ID = %s", (bg_id,))
+        form_html = client.get("/donations").get_data(as_text=True)
+        results.check("donation form has required Units Donated field",
+                      'name="units_donated"' in form_html
+                      and 'min="1"' in form_html
+                      and 'step="1"' in form_html
+                      and 'value="1"' in form_html
+                      and "required" in form_html)
+
+        def record_units(units, day):
+            """Submit a donation and return stock/count values around it."""
+            before = scalar("SELECT Total_Qty FROM Blood_Stock WHERE Bg_ID = %s", (bg_id,))
+            count_before = scalar(
+                "SELECT COUNT(*) AS n FROM Donation WHERE Donor_ID=%s", (d2["Donor_ID"],))
+            token = csrf_token(client, "/donations")
+            response = post(client, "/donations", csrf_token=token, donor_id=d2["Donor_ID"],
+                            bg_id=bg_id, donation_date=f"2026-07-{day:02d}",
+                            units_donated=str(units))
+            after = scalar("SELECT Total_Qty FROM Blood_Stock WHERE Bg_ID = %s", (bg_id,))
+            count_after = scalar(
+                "SELECT COUNT(*) AS n FROM Donation WHERE Donor_ID=%s", (d2["Donor_ID"],))
+            donation = db.fetch_one(
+                "SELECT Donation_ID, Units_Donated FROM Donation "
+                "WHERE Donor_ID=%s AND Donation_Date=%s",
+                (d2["Donor_ID"], f"2026-07-{day:02d}"),
+            )
+            if donation:
+                created["donations"].append(donation["Donation_ID"])
+            return before, after, count_before, count_after, donation, response
+
+        for units, day in ((1, 1), (2, 2), (3, 3)):
+            before, after, count_before, count_after, donation, response = record_units(units, day)
+            results.check(f"donation of {units} unit(s) redirects (PRG)",
+                          response.status_code == 302, f"got {response.status_code}")
+            results.check(f"donation of {units} unit(s) increases stock by {units}",
+                          after == before + Decimal(units), f"before={before} after={after}")
+            results.check(f"donation of {units} unit(s) stores Units_Donated={units}",
+                          donation is not None and donation["Units_Donated"] == units, str(donation))
+            results.check(f"donation of {units} unit(s) creates exactly one row",
+                          count_after == count_before + 1, f"{count_before}->{count_after}")
+
+        # Existing whole-number "qty" submissions keep working (legacy clients).
+        legacy_before = scalar("SELECT Total_Qty FROM Blood_Stock WHERE Bg_ID = %s", (bg_id,))
         token = csrf_token(client, "/donations")
         post(client, "/donations", csrf_token=token, donor_id=d2["Donor_ID"],
-             bg_id=bg_id, donation_date="2026-07-01", qty="2.00")
-        after = scalar("SELECT Total_Qty FROM Blood_Stock WHERE Bg_ID = %s", (bg_id,))
-        results.check("donation increases stock by qty", after == before + Decimal("2.00"),
-                      f"before={before} after={after}")
-        don = db.fetch_one(
-            "SELECT Donation_ID FROM Donation WHERE Donor_ID=%s AND Donation_Date='2026-07-01'",
+             bg_id=bg_id, donation_date="2026-07-06", qty="1.00")
+        legacy_after = scalar("SELECT Total_Qty FROM Blood_Stock WHERE Bg_ID = %s", (bg_id,))
+        legacy = db.fetch_one(
+            "SELECT Donation_ID FROM Donation WHERE Donor_ID=%s AND Donation_Date='2026-07-06'",
             (d2["Donor_ID"],))
-        if don:
-            created["donations"].append(don["Donation_ID"])
-        results.check("donation row persisted", don is not None)
+        if legacy:
+            created["donations"].append(legacy["Donation_ID"])
+        results.check("legacy qty=1.00 still increases stock by 1",
+                      legacy_after == legacy_before + Decimal("1"),
+                      f"before={legacy_before} after={legacy_after}")
 
         # mismatched blood group is rejected and stock unchanged
         other_bg = 5 if bg_id != 5 else 6
         mid = scalar("SELECT Total_Qty FROM Blood_Stock WHERE Bg_ID = %s", (other_bg,))
         token = csrf_token(client, "/donations")
         post(client, "/donations", csrf_token=token, donor_id=d2["Donor_ID"],
-             bg_id=other_bg, donation_date="2026-07-02", qty="1.00")
+             bg_id=other_bg, donation_date="2026-07-04", units_donated="1")
         mid2 = scalar("SELECT Total_Qty FROM Blood_Stock WHERE Bg_ID = %s", (other_bg,))
         results.check("mismatched blood-group donation rejected", mid == mid2,
                       f"other_bg stock changed {mid}->{mid2}")
 
-        # invalid (zero) quantity rejected
-        zero_before = scalar("SELECT Total_Qty FROM Blood_Stock WHERE Bg_ID = %s", (bg_id,))
-        token = csrf_token(client, "/donations")
-        post(client, "/donations", csrf_token=token, donor_id=d2["Donor_ID"],
-             bg_id=bg_id, donation_date="2026-07-02", qty="0")
-        zero_after = scalar("SELECT Total_Qty FROM Blood_Stock WHERE Bg_ID = %s", (bg_id,))
-        results.check("zero quantity rejected", zero_before == zero_after)
+        # Invalid quantities: zero, negative, decimal, text, blank, missing.
+        for label, value in (
+            ("zero", "0"),
+            ("negative", "-1"),
+            ("decimal", "1.5"),
+            ("whole-looking decimal", "2.0"),
+            ("text", "abc"),
+            ("blank", ""),
+            ("missing", None),
+        ):
+            before = scalar("SELECT Total_Qty FROM Blood_Stock WHERE Bg_ID = %s", (bg_id,))
+            don_before = scalar("SELECT COUNT(*) AS n FROM Donation")
+            data = {"csrf_token": csrf_token(client, "/donations"), "donor_id": d2["Donor_ID"],
+                    "bg_id": bg_id, "donation_date": "2026-07-11"}
+            if value is not None:
+                data["units_donated"] = value
+            post(client, "/donations", **data)
+            after = scalar("SELECT Total_Qty FROM Blood_Stock WHERE Bg_ID = %s", (bg_id,))
+            don_after = scalar("SELECT COUNT(*) AS n FROM Donation")
+            results.check(f"invalid units ({label}) rejected: stock unchanged", before == after)
+            results.check(f"invalid units ({label}) rejected: no donation row",
+                          don_before == don_after, f"{don_before}->{don_after}")
 
         # -------------------------------------------------------------- #
         # B5. Request workflow: create/approve change nothing; fulfil deducts
@@ -433,7 +505,7 @@ def run_behaviour(results):
         try:
             with db.transaction() as cur:
                 cur.execute(
-                    "INSERT INTO Donation (Donor_ID, Bg_ID, Donation_Date, Qty) VALUES (%s,%s,%s,%s)",
+                    "INSERT INTO Donation (Donor_ID, Bg_ID, Donation_Date, Units_Donated) VALUES (%s,%s,%s,%s)",
                     (d2["Donor_ID"], bg_id, "2026-07-05", 1))
                 cur.execute("UPDATE Blood_Stock SET Total_Qty = Total_Qty + 1 WHERE Bg_ID=%s", (bg_id,))
                 # force a failure: duplicate blood group violates a UNIQUE key

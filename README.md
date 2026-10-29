@@ -115,7 +115,8 @@ column would duplicate the same information. See the comment at the top of
 Notable constraints:
 
 - `Donor.Age` — `CHECK (Age BETWEEN 18 AND 65)`.
-- `Donation.Qty`, `Blood_Request.Qty` — `CHECK (Qty > 0)`.
+- `Donation.Units_Donated` — integer, `DEFAULT 1`, `CHECK (Units_Donated >= 1)`.
+- `Blood_Request.Qty` — `CHECK (Qty > 0)`.
 - `Blood_Stock.Total_Qty` — `CHECK (Total_Qty >= 0)` (database-level protection
   against negative stock).
 - `Blood_Request.Status` — `ENUM('Pending','Approved','Completed','Rejected')`,
@@ -179,7 +180,7 @@ erDiagram
         int     Donor_ID FK
         int     Bg_ID FK
         date    Donation_Date
-        decimal Qty
+        int     Units_Donated
     }
     Hospital {
         int     Hospital_ID PK
@@ -226,7 +227,7 @@ erDiagram
   repeating groups. Blood groups exist as rows, not as columns.
 - **2NF (satisfied).** Every table has a single-column primary key, so there can
   be no partial dependency on part of a composite key. Non-key attributes
-  (`Name`, `Age`, `Qty`, …) depend on the whole key.
+  (`Name`, `Age`, `Units_Donated`, …) depend on the whole key.
 - **3NF (satisfied, with one documented exception).** Non-key attributes depend
   on the key and not on other non-key attributes. The one deliberate redundancy
   is `Donation.Bg_ID`: it can be derived from `Donor.Bg_ID`. We keep it because a
@@ -281,13 +282,13 @@ All 18 ready-to-run queries are in [`queries.sql`](queries.sql). Highlights:
   ```
 - **Total donated per donor with `COALESCE` for zero.**
   ```sql
-  SELECT d.Name, COALESCE(SUM(dn.Qty), 0) AS total_donated
+  SELECT d.Name, COALESCE(SUM(dn.Units_Donated), 0) AS total_donated
   FROM Donor d LEFT JOIN Donation dn ON d.Donor_ID = dn.Donor_ID
   GROUP BY d.Donor_ID, d.Name;
   ```
 - **Monthly donation totals.**
   ```sql
-  SELECT DATE_FORMAT(Donation_Date, '%Y-%m') AS month, SUM(Qty) AS total_qty
+  SELECT DATE_FORMAT(Donation_Date, '%Y-%m') AS month, SUM(Units_Donated) AS total_units
   FROM Donation GROUP BY DATE_FORMAT(Donation_Date, '%Y-%m') ORDER BY month;
   ```
 
@@ -305,13 +306,18 @@ A request being created or approved does **not** change stock.
 
 Implemented in `_create_donation()` in [`app.py`](app.py):
 
-1. Validate donor, blood group, date and quantity.
+1. Validate donor, blood group, date and `Units_Donated` (whole number, at
+   least 1; zero, negative, missing and non-integer values are rejected).
 2. Confirm the donation's `Bg_ID` equals the donor's registered `Bg_ID`.
 3. `START TRANSACTION`.
-4. `INSERT INTO Donation (...)`.
-5. `UPDATE Blood_Stock SET Total_Qty = Total_Qty + :qty, Last_Updated = NOW()`.
+4. `INSERT INTO Donation (... Units_Donated)`.
+5. `UPDATE Blood_Stock SET Total_Qty = Total_Qty + :units, Last_Updated = NOW()`.
 6. If the stock row was not found (`rowcount != 1`), raise → rollback.
 7. `COMMIT` (both changes together).
+
+There is **no trigger** on `Donation`; the application update above is the only
+mechanism that adds a donation to `Blood_Stock`, so units are never counted
+twice.
 
 ### B. Fulfilling a request (stock decreases)
 
@@ -442,6 +448,26 @@ sudo mysql blood_bank_db -e "SHOW TABLES; SELECT * FROM Blood_Group;"
 > `seed.sql` is for **initial setup** and must not be run twice (the `UNIQUE`
 > constraints will reject duplicates). To start over, re-run `schema.sql` then
 > `seed.sql`.
+
+### 17.1 Upgrading an existing database (Units Donated)
+
+A fresh `schema.sql` already contains `Donation.Units_Donated`. If you have an
+**existing** `blood_bank_db` created before this feature, do **not** re-run
+`schema.sql` (it drops the database). Run the additive migration once with an
+admin account instead:
+
+```bash
+# Back up just the donation history first (recommended).
+mysqldump -u <admin_user> -p blood_bank_db Donation > Donation_backup.sql
+
+# Add Units_Donated, copy historical quantities, and remove the old Qty column.
+mysql -u <admin_user> -p blood_bank_db < migration_units_donated.sql
+```
+
+The migration keeps every donation row. A positive whole-number `Qty` is copied
+exactly (for example `3.00` → `3`); any other old value becomes `1`, because a
+donation must be a whole number of units. It never drops the database or a
+table, and it is safe to re-run.
 
 Then confirm the app user can connect:
 
@@ -575,7 +601,8 @@ SELECT COUNT(*) FROM Blood_Stock WHERE Total_Qty < 0;   -- 0
 
 - No authentication: it is a single-user local demonstration, so anyone with the
   URL can edit data. (Kept simple on purpose, as allowed by the brief.)
-- Stock is tracked in whole units as a decimal quantity; there is no
+- Stock is tracked in whole units; each donation stores its own integer
+  `Units_Donated` value. There is no
   component-level tracking (plasma, platelets) or expiry date.
 - Blood group can be edited on a donor; historical donations keep their original
   group, but there is no formal audit-log table.
@@ -712,6 +739,8 @@ behaves exactly as before.
 ### 21.8 Manual steps you must still do
 
 - Create the Aiven service, download `ca.pem`, and import `schema.sql` + `seed.sql`.
+- For an **existing** hosted database, run `migration_units_donated.sql` once
+  instead of re-importing `schema.sql`.
 - Create the Render Web Service, add the environment variables and the CA Secret File.
 - Generate a strong `FLASK_SECRET_KEY`.
 - Push the repository to GitHub (the repo does not exist yet).
@@ -825,6 +854,7 @@ DBMSproject/
 ├── db.py                  # MySQL connection helpers (no ORM)
 ├── schema.sql             # database + six tables (highest priority)
 ├── admin_schema.sql       # ADDITIVE migration: Admin_Audit_Log (+ run once)
+├── migration_units_donated.sql  # ADDITIVE migration: Donation.Units_Donated
 ├── seed.sql               # sample data, consistent with stock formula
 ├── queries.sql            # 18 demonstration queries
 ├── requirements.txt       # Flask, mysql-connector-python, gunicorn

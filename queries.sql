@@ -55,10 +55,10 @@ GROUP BY d.Donor_ID, d.Name
 ORDER BY donation_count DESC, d.Name;
 
 -- -----------------------------------------------------------------------------
--- 6) Aggregation (SUM): total quantity donated by each donor.
+-- 6) Aggregation (SUM): total units donated by each donor.
 --    COALESCE turns the NULL of a donor with no donations into 0.
 -- -----------------------------------------------------------------------------
-SELECT d.Donor_ID, d.Name, COALESCE(SUM(dn.Qty), 0) AS total_donated
+SELECT d.Donor_ID, d.Name, COALESCE(SUM(dn.Units_Donated), 0) AS total_donated
 FROM Donor d
 LEFT JOIN Donation dn ON d.Donor_ID = dn.Donor_ID
 GROUP BY d.Donor_ID, d.Name
@@ -113,17 +113,17 @@ ORDER BY br.Request_ID;
 -- -----------------------------------------------------------------------------
 -- 12) Range filter: donations made within a date range (BETWEEN).
 -- -----------------------------------------------------------------------------
-SELECT Donation_ID, Donor_ID, Bg_ID, Donation_Date, Qty
+SELECT Donation_ID, Donor_ID, Bg_ID, Donation_Date, Units_Donated
 FROM Donation
 WHERE Donation_Date BETWEEN '2026-02-01' AND '2026-03-31'
 ORDER BY Donation_Date;
 
 -- -----------------------------------------------------------------------------
--- 13) Monthly totals: total quantity donated per calendar month.
---     DATE_FORMAT groups rows by year-month.
+-- 13) Monthly totals: total units donated and number of donation events per
+--     calendar month. DATE_FORMAT groups rows by year-month.
 -- -----------------------------------------------------------------------------
 SELECT DATE_FORMAT(Donation_Date, '%Y-%m') AS month,
-       SUM(Qty) AS total_qty,
+       SUM(Units_Donated) AS total_units,
        COUNT(*) AS donations
 FROM Donation
 GROUP BY DATE_FORMAT(Donation_Date, '%Y-%m')

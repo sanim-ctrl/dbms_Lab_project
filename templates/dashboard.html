@@ -41,12 +41,12 @@
   <div>
     <h2>Recent Donations</h2>
     <table>
-      <thead><tr><th>#</th><th>Donor</th><th>Group</th><th>Date</th><th>Qty</th></tr></thead>
+      <thead><tr><th>#</th><th>Donor</th><th>Group</th><th>Date</th><th>Units Donated</th></tr></thead>
       <tbody>
         {% for d in recent_donations %}
         <tr>
           <td>{{ d.Donation_ID }}</td><td>{{ d.donor }}</td>
-          <td>{{ d.Blood_Type }}</td><td>{{ d.Donation_Date }}</td><td>{{ d.Qty }}</td>
+          <td>{{ d.Blood_Type }}</td><td>{{ d.Donation_Date }}</td><td>{{ d.Units_Donated }}</td>
         </tr>
         {% else %}
         <tr><td colspan="5" class="muted">No donations recorded yet.</td></tr>

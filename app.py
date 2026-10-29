@@ -193,7 +193,7 @@ def dashboard():
              (SELECT COUNT(*) FROM Donor)                                  AS donors,
              (SELECT COUNT(*) FROM Hospital)                               AS hospitals,
              (SELECT COUNT(*) FROM Donation)                               AS donations,
-             (SELECT COALESCE(SUM(Qty),0) FROM Donation)                   AS donated_units,
+             (SELECT COALESCE(SUM(Units_Donated),0) FROM Donation)         AS donated_units,
              (SELECT COUNT(*) FROM Blood_Request WHERE Status='Pending')   AS pending,
              (SELECT COUNT(*) FROM Blood_Request WHERE Status='Approved')  AS approved,
              (SELECT COUNT(*) FROM Blood_Request WHERE Status='Completed') AS completed,
@@ -209,7 +209,7 @@ def dashboard():
 
     recent_donations = db.fetch_all(
         """SELECT dn.Donation_ID, d.Name AS donor, bg.Blood_Type,
-                  dn.Donation_Date, dn.Qty
+                  dn.Donation_Date, dn.Units_Donated
            FROM Donation dn
            JOIN Donor d       ON dn.Donor_ID = d.Donor_ID
            JOIN Blood_Group bg ON dn.Bg_ID = bg.Bg_ID
@@ -247,8 +247,8 @@ def donors():
 
     sql = """SELECT d.Donor_ID, d.Name, d.Age, d.Gender, d.Phone,
                     d.Bg_ID, bg.Blood_Type,
-                    COUNT(dn.Donation_ID)      AS donation_count,
-                    COALESCE(SUM(dn.Qty), 0)   AS total_donated
+                    COUNT(dn.Donation_ID)              AS donation_count,
+                    COALESCE(SUM(dn.Units_Donated), 0) AS total_donated
              FROM Donor d
              JOIN Blood_Group bg ON d.Bg_ID = bg.Bg_ID
              LEFT JOIN Donation dn ON d.Donor_ID = dn.Donor_ID
@@ -370,13 +370,13 @@ def donor_donations(donor_id):
     if donor is None:
         abort(404)
     history = db.fetch_all(
-        """SELECT dn.Donation_ID, dn.Donation_Date, dn.Qty, bg.Blood_Type
+        """SELECT dn.Donation_ID, dn.Donation_Date, dn.Units_Donated, bg.Blood_Type
            FROM Donation dn JOIN Blood_Group bg ON dn.Bg_ID = bg.Bg_ID
            WHERE dn.Donor_ID = %s
            ORDER BY dn.Donation_Date DESC, dn.Donation_ID DESC""",
         (donor_id,),
     )
-    total = sum((row["Qty"] for row in history), Decimal("0"))
+    total = sum((row["Units_Donated"] for row in history), Decimal("0"))
     return render_template("donations.html", donor=donor, history=history, total=total,
                            donors=[], blood_groups=[], today=date.today().isoformat(),
                            filters={"donor_id": str(donor_id)}, readonly=True)
@@ -395,7 +395,7 @@ def donations():
     date_from = request.args.get("date_from", "").strip()
     date_to = request.args.get("date_to", "").strip()
 
-    sql = """SELECT dn.Donation_ID, dn.Donation_Date, dn.Qty,
+    sql = """SELECT dn.Donation_ID, dn.Donation_Date, dn.Units_Donated,
                     d.Donor_ID, d.Name AS donor, bg.Blood_Type
              FROM Donation dn
              JOIN Donor d       ON dn.Donor_ID = d.Donor_ID
@@ -417,7 +417,7 @@ def donations():
     sql += " ORDER BY dn.Donation_Date DESC, dn.Donation_ID DESC"
 
     history = db.fetch_all(sql, params)
-    total = sum((row["Qty"] for row in history), Decimal("0"))
+    total = sum((row["Units_Donated"] for row in history), Decimal("0"))
 
     donor_list = db.fetch_all(
         """SELECT d.Donor_ID, d.Name, d.Bg_ID, bg.Blood_Type
@@ -446,7 +446,16 @@ def _create_donation():
         donor_id = as_int(request.form.get("donor_id"), "Donor")
         bg_id = as_int(request.form.get("bg_id"), "Blood group")
         donation_date = as_date(request.form.get("donation_date"), "Donation date")
-        qty = as_positive_decimal(request.form.get("qty"), "Quantity")
+        if "units_donated" in request.form:
+            units = as_int(request.form.get("units_donated"), "Units donated", 1)
+        else:
+            # Legacy form field: accept a whole-number "qty" for older clients.
+            legacy_qty = as_positive_decimal(request.form.get("qty"), "Units donated")
+            if legacy_qty != legacy_qty.to_integral_value():
+                raise ValidationError("Units donated must be a whole number.")
+            units = int(legacy_qty)
+            if units < 1:
+                raise ValidationError("Units donated must be at least 1.")
     except ValidationError as err:
         flash(str(err), "error")
         return back()
@@ -465,17 +474,19 @@ def _create_donation():
 
             # 3) Insert the donation.
             cur.execute(
-                """INSERT INTO Donation (Donor_ID, Bg_ID, Donation_Date, Qty)
+                """INSERT INTO Donation (Donor_ID, Bg_ID, Donation_Date, Units_Donated)
                    VALUES (%s, %s, %s, %s)""",
-                (donor_id, bg_id, donation_date, qty),
+                (donor_id, bg_id, donation_date, units),
             )
 
             # 4) Increase stock for that blood group and refresh the timestamp.
+            # There is no trigger on Donation, so this is the ONLY place a
+            # donation adds units to Blood_Stock (no double counting).
             cur.execute(
                 """UPDATE Blood_Stock
                    SET Total_Qty = Total_Qty + %s, Last_Updated = NOW()
                    WHERE Bg_ID = %s""",
-                (qty, bg_id),
+                (units, bg_id),
             )
             if cur.rowcount != 1:
                 raise ValidationError("No stock record exists for the selected blood group.")
@@ -797,7 +808,7 @@ def reports():
     donations_by_donor = db.fetch_all(
         """SELECT d.Name AS donor, bg.Blood_Type,
                   COUNT(dn.Donation_ID) AS donations,
-                  COALESCE(SUM(dn.Qty), 0) AS total_units
+                  COALESCE(SUM(dn.Units_Donated), 0) AS total_units
            FROM Donor d
            JOIN Blood_Group bg ON d.Bg_ID = bg.Bg_ID
            LEFT JOIN Donation dn ON d.Donor_ID = dn.Donor_ID
@@ -833,7 +844,7 @@ def reports():
     monthly_donations = db.fetch_all(
         """SELECT DATE_FORMAT(Donation_Date, '%Y-%m') AS month,
                   COUNT(*) AS donations,
-                  SUM(Qty) AS total_units
+                  SUM(Units_Donated) AS total_units
            FROM Donation
            GROUP BY DATE_FORMAT(Donation_Date, '%Y-%m')
            ORDER BY month"""

@@ -66,7 +66,7 @@ CREATE TABLE Donor (
 --   One row per donation event. Bg_ID is stored (denormalised on purpose so a
 --   historic donation keeps the group it was given for) but the application
 --   enforces that it matches the donor's registered group.
---   Qty is measured in blood units and must be positive.
+--   Units_Donated is the number of whole blood units collected and must be >= 1.
 --   RESTRICT on Donor_ID protects donation history (auditability): a donor with
 --   donations cannot simply be deleted.
 -- -----------------------------------------------------------------------------
@@ -75,9 +75,9 @@ CREATE TABLE Donation (
     Donor_ID       INT          NOT NULL,
     Bg_ID          INT          NOT NULL,
     Donation_Date  DATE         NOT NULL,
-    Qty            DECIMAL(6,2) NOT NULL,
+    Units_Donated  INT          NOT NULL DEFAULT 1,
     PRIMARY KEY (Donation_ID),
-    CONSTRAINT chk_donation_qty CHECK (Qty > 0),
+    CONSTRAINT chk_donation_units CHECK (Units_Donated >= 1),
     KEY idx_donation_date (Donation_Date),
     KEY idx_donation_donor (Donor_ID),
     KEY idx_donation_bg (Bg_ID),
